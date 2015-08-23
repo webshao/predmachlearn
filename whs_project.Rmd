@@ -133,4 +133,4 @@ Most importantly, the result of the prediction on the 20 testing cases are the s
 
 # Conclusion
 
-There are many capable model training techniques available. Often times, such as in a production environment, it may be optimal to also consider time efficiency before settling on the model of choice.
+There are many capable model training techniques available. Often times, if multiple models give comparable prediction results, it may be wise to also consider time efficiency before settling on the model of choice.
