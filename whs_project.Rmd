@@ -1,0 +1,136 @@
+---
+title: "Analysis of Groupware Human Activity Data Set"
+author: "Weber Shao"
+date: "August 20, 2015"
+output: html_document
+---
+
+# Introduction
+
+In this document, a set of Human Activity Recognition (HAR) data released by Groupware@LSE is analyzed to determine the type of weight lifting activity, out of the five possible categories: exactly as specified (A), throwing elbows to the front (B), lifting the dumbell halfway (C), lowering the dumbbell halfway (D), and throwing the hips to the front (E).
+
+Each record of the activity comes with data collected from accelerometers attached to the arm, forearm, belt, and dumbbell. A training data set of 19622 records with the class of activity and a testing data set of 20 records without the class of activity provided. The goal of this study is to successfully predict the correct activity type in the testing data set. 
+
+# Preprocessing
+
+After the data is downloaded, it is noticeable that some columns of both the training and testing contain no information that will be helpful with the prediction. We can drop columns 1-7 immediately. Furthermore, there are columns that just hold NA values. They can be dropped as well.
+
+```{r}
+trainingCsv <- "/home/wshao/school/coursera/predmachlearn-031/project/pml-training.csv"
+download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", trainingCsv)
+rawTraining <- read.csv(trainingCsv)
+
+testingCsv <- "/home/wshao/school/coursera/predmachlearn-031/project/pml-testing.csv"
+download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", testingCsv)
+rawTesting <- read.csv(testingCsv)
+
+# First 10 columns names
+head(names(rawTraining), 10)
+
+# Take out columns 1-7, where the data is not sensor data
+training <- rawTraining[,8:160]
+
+# Remove columns where there are all NAs
+isnaTraining = as.data.frame(is.na(training))
+sumIsnaTraining = apply(isnaTraining, 2, sum)
+indIsnaTraining <- which(sumIsnaTraining == 0)
+training <- training[,indIsnaTraining]
+
+indNonfactorCol <- which((sapply(training, class) != 'factor'))
+training <- training[,indNonfactorCol]
+training$classe <- rawTraining$classe
+
+testing <- rawTesting[,8:160]
+testing <- testing[,indIsnaTraining]
+testing <- testing[,indNonfactorCol]
+testing$classe <- rawTesting$classe
+```
+
+The original training set ought to be divided into a pure training set (PTR) and cross validation set (CVL). In this study, the pure training set is 60% of the original training set while the cross validation set is 40% of the original training set. 
+
+# Data Set Splitting
+
+```{r message=FALSE}
+library(caret)
+```
+
+```{r}
+set.seed(12345)
+inA <- createDataPartition(rawTraining$X, p=0.6)
+
+ptrSet <- training[inA[[1]],]
+cvlSet <- training[-inA[[1]],]
+```
+
+# Model Selection
+
+First, a random forest model is tried out on the pure training data set, with 5-fold cross validation. The model is then tested on the 40% cross-validation (CVL) set split apart at the beginning, not to be confused with the k-fold cross-validation used in training process for this random forest model.
+
+```{r cache=TRUE}
+set.seed(23516)
+ptm <- proc.time()
+modelRf <- train(classe ~ ., data=ptrSet, method="rf",
+                trControl=trainControl(method="cv",number=5),
+                prox=TRUE, allowParallel=TRUE)
+timeRf <- proc.time() - ptm
+```
+
+```{r message=FALSE, fig.height=9}
+plot(varImp(modelRf), main = "Variable Importance in Random Forest Model")
+```
+
+```{r}
+predRfCvl = predict(modelRf, newdata = cvlSet)
+rfCvlAccuracy = sum(predRfCvl == cvlSet$classe) / nrow(cvlSet)
+rfCvlError = 1 - rfCvlAccuracy
+rfCvlError
+timeRf
+```
+
+The expected out-of-sample error is 0.8%. However, the time spent in training the model is 29 minutes on a Intel(R) Core(TM) i3-2130 CPU @ 3.40GHz computer. The size of the model in memory is a costly 1.1 Gb.
+
+
+```{r warning=FALSE}
+confusionMatrix(table(predRfCvl, cvlSet$classe))
+predRfTesting = predict(modelRf, newdata = testing)
+predRfTesting
+```
+
+The prediction on the testing is given above. We will next explore an alternative option, using boosting. The gradient boosting machine method is selected. We will also train this model with 5-fold cross validation.
+
+```{r cache=TRUE}
+set.seed(62351)
+ptm <- proc.time()
+modelGbm <- train(classe ~., data=ptrSet, method="gbm",
+                  trControl=trainControl(method="cv", number=5),
+                  verbose=FALSE)
+timeGbm <- proc.time() - ptm
+```
+
+```{r message=FALSE, fig.height=9}
+plot(varImp(modelGbm), main = "Variable Importance in Gradient Boost Machine Model")
+```
+
+```{r}
+predGbmCvl = predict(modelGbm, newdata = cvlSet)
+gbmCvlAccuracy = sum(predGbmCvl == cvlSet$classe) / nrow(cvlSet)
+gbmCvlError = 1 - gbmCvlAccuracy
+gbmCvlError
+timeGbm
+```
+
+Here the expected out-of-sample error rate is 3.7%. not 
+not as low as what was obtained by the random forest model, but still very good. The training time is much faster, at under 4 minutes on the same computer, and the amount of memory used is much smaller, at 15.9 Mb. The confusion matrix is shown below.
+
+```{r warning=FALSE}
+confusionMatrix(table(predGbmCvl, cvlSet$classe))
+predGbmTesting = predict(modelGbm, newdata = testing)
+predGbmTesting
+sum(predRfTesting == predGbmTesting)
+```
+
+Most importantly, the result of the prediction on the 20 testing cases are the same as the result using the random forest model.
+
+# Conclusion
+
+There are many capable model training techniques available. Often times, such as in a production environment, it may be optimal to select a model that is very accurate, but not necessarily the most accurate one according to the out-of-sample error estimate, for the sake of time efficiency.
